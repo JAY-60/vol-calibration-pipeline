@@ -1,97 +1,81 @@
 import numpy as np
 import pytest
 
-from volcal.calibration.objective import make_iv_objective
-from volcal.calibration.optimizers import (
-    run_differential_evolution_then_least_squares,
-    run_least_squares,
-)
+from volcal.calibration.bounds import ParameterBounds
+from volcal.calibration.optimizers import run_least_squares
 
 
-def test_run_least_squares_recovers_flat_vol_parameter() -> None:
-    target_ivs = np.array([0.25, 0.25, 0.25])
+def test_run_least_squares_recovers_scalar_parameter() -> None:
+    bounds = ParameterBounds(lower=(0.0,), upper=(5.0,))
 
-    def flat_vol_model(params: np.ndarray) -> np.ndarray:
-        sigma = params[0]
-        return np.full_like(target_ivs, fill_value=sigma, dtype=float)
-
-    objective = make_iv_objective(
-        target_ivs=target_ivs,
-        model_iv_function=flat_vol_model,
-    )
+    def objective(params: np.ndarray) -> np.ndarray:
+        return np.array([params[0] - 2.0])
 
     result = run_least_squares(
         objective=objective,
-        initial_guess=np.array([0.10]),
-        lower_bounds=np.array([0.01]),
-        upper_bounds=np.array([2.00]),
+        initial_guess=np.array([0.5]),
+        bounds=bounds,
     )
 
     assert result.success
-    assert result.params[0] == pytest.approx(0.25, abs=1e-6)
-    assert np.linalg.norm(result.residuals) < 1e-6
+    assert result.params[0] == pytest.approx(2.0, abs=1e-6)
+    assert result.sum_squared_error == pytest.approx(0.0, abs=1e-10)
 
 
-def test_global_then_local_recovers_flat_vol_parameter() -> None:
-    target_ivs = np.array([0.35, 0.35, 0.35])
+def test_run_least_squares_respects_upper_bound() -> None:
+    bounds = ParameterBounds(lower=(0.0,), upper=(5.0,))
 
-    def flat_vol_model(params: np.ndarray) -> np.ndarray:
-        sigma = params[0]
-        return np.full_like(target_ivs, fill_value=sigma, dtype=float)
+    def objective(params: np.ndarray) -> np.ndarray:
+        return np.array([params[0] - 10.0])
 
-    objective = make_iv_objective(
-        target_ivs=target_ivs,
-        model_iv_function=flat_vol_model,
-    )
-
-    result = run_differential_evolution_then_least_squares(
+    result = run_least_squares(
         objective=objective,
-        lower_bounds=np.array([0.01]),
-        upper_bounds=np.array([2.00]),
-        maxiter=20,
-        seed=123,
+        initial_guess=np.array([1.0]),
+        bounds=bounds,
     )
 
     assert result.success
-    assert result.params[0] == pytest.approx(0.35, abs=1e-5)
-    assert np.linalg.norm(result.residuals) < 1e-5
+    assert result.params[0] <= 5.0
 
 
-def test_least_squares_rejects_initial_guess_outside_bounds() -> None:
-    target_ivs = np.array([0.25, 0.25, 0.25])
+def test_run_least_squares_rejects_wrong_initial_guess_shape() -> None:
+    bounds = ParameterBounds(lower=(0.0, 0.0), upper=(5.0, 5.0))
 
-    def flat_vol_model(params: np.ndarray) -> np.ndarray:
-        return np.full_like(target_ivs, fill_value=params[0], dtype=float)
+    def objective(params: np.ndarray) -> np.ndarray:
+        return params
 
-    objective = make_iv_objective(
-        target_ivs=target_ivs,
-        model_iv_function=flat_vol_model,
-    )
-
-    with pytest.raises(ValueError, match="Initial guess must lie within the bounds"):
+    with pytest.raises(ValueError, match="wrong shape"):
         run_least_squares(
             objective=objective,
-            initial_guess=np.array([3.00]),
-            lower_bounds=np.array([0.01]),
-            upper_bounds=np.array([2.00]),
+            initial_guess=np.array([1.0]),
+            bounds=bounds,
         )
 
 
-def test_optimizers_reject_invalid_bounds() -> None:
-    target_ivs = np.array([0.25, 0.25, 0.25])
+def test_run_least_squares_rejects_initial_guess_outside_bounds() -> None:
+    bounds = ParameterBounds(lower=(0.0,), upper=(5.0,))
 
-    def flat_vol_model(params: np.ndarray) -> np.ndarray:
-        return np.full_like(target_ivs, fill_value=params[0], dtype=float)
+    def objective(params: np.ndarray) -> np.ndarray:
+        return params
 
-    objective = make_iv_objective(
-        target_ivs=target_ivs,
-        model_iv_function=flat_vol_model,
-    )
-
-    with pytest.raises(ValueError, match="strictly less"):
+    with pytest.raises(ValueError, match="inside the supplied bounds"):
         run_least_squares(
             objective=objective,
-            initial_guess=np.array([0.25]),
-            lower_bounds=np.array([1.00]),
-            upper_bounds=np.array([1.00]),
+            initial_guess=np.array([10.0]),
+            bounds=bounds,
+        )
+
+
+def test_run_least_squares_rejects_non_positive_max_evaluations() -> None:
+    bounds = ParameterBounds(lower=(0.0,), upper=(5.0,))
+
+    def objective(params: np.ndarray) -> np.ndarray:
+        return params
+
+    with pytest.raises(ValueError, match="max_nfev must be positive"):
+        run_least_squares(
+            objective=objective,
+            initial_guess=np.array([1.0]),
+            bounds=bounds,
+            max_nfev=0,
         )
