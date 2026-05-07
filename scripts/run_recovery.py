@@ -5,164 +5,148 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from volcal.calibration.metrics import (
-    mean_absolute_error,
-    root_mean_squared_error,
+from volcal.calibration.bounds import heston_default_bounds
+from volcal.calibration.heston_calibration import (
+    HestonCalibrationMarket,
+    heston_iv_residuals,
+    heston_model_implied_vols,
 )
-from volcal.calibration.objective import make_iv_objective
-from volcal.calibration.optimizers import (
-    OptimizerResult,
-    run_differential_evolution_then_least_squares,
-    run_least_squares,
-)
-from volcal.data.synthetic_surface import (
-    SyntheticSurfaceConfig,
-    generate_synthetic_surface,
-)
+from volcal.calibration.optimizers import run_least_squares
+from volcal.pricing.heston_pricer import HestonParams
 
 
-RESULTS_DIR = Path("results/tables")
-RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR = Path("results") / "tables"
 
 
-TRUE_PARAMS = {
-    "base_vol": 0.20,
-    "skew": -0.15,
-    "curvature": 0.25,
-    "term_slope": 0.03,
-}
-
-
-def parametric_iv_model(
-    params: np.ndarray,
-    moneyness: np.ndarray,
-    maturities: np.ndarray,
-) -> np.ndarray:
+def true_heston_params() -> HestonParams:
     """
-    Parametric implied-volatility model used for recovery testing.
-
-    params = [base_vol, skew, curvature, term_slope]
+    Parameters used to generate the synthetic Heston target surface.
     """
-    base_vol, skew, curvature, term_slope = params
-    log_moneyness = np.log(moneyness)
-
-    model_ivs = (
-        base_vol
-        + skew * log_moneyness
-        + curvature * log_moneyness**2
-        + term_slope * np.sqrt(maturities)
+    return HestonParams(
+        kappa=1.5,
+        theta=0.04,
+        vol_of_vol=0.35,
+        rho=-0.55,
+        v0=0.04,
     )
 
-    return np.maximum(model_ivs, 1e-4)
+
+def build_synthetic_heston_market() -> HestonCalibrationMarket:
+    """
+    Build a small synthetic calibration market from known Heston parameters.
+    """
+    spot = 100.0
+    rate = 0.02
+
+    strikes = np.array([95.0, 100.0, 105.0])
+    maturities = np.array([0.5, 1.0, 1.5])
+
+    placeholder_market = HestonCalibrationMarket(
+        spot=spot,
+        rate=rate,
+        strikes=strikes,
+        maturities=maturities,
+        target_ivs=np.full_like(strikes, 0.20, dtype=float),
+    )
+
+    target_ivs = heston_model_implied_vols(
+        market=placeholder_market,
+        params=true_heston_params(),
+    )
+
+    return HestonCalibrationMarket(
+        spot=spot,
+        rate=rate,
+        strikes=strikes,
+        maturities=maturities,
+        target_ivs=target_ivs,
+    )
 
 
-def build_results_row(
-    optimizer_name: str,
-    result: OptimizerResult,
-    target_ivs: np.ndarray,
-    model_ivs: np.ndarray,
-) -> dict[str, float | str | bool | int]:
+def safe_heston_residuals(
+    params_vector: np.ndarray,
+    market: HestonCalibrationMarket,
+) -> np.ndarray:
     """
-    Build one row of calibration results.
+    Compute Heston residuals, returning a large penalty if pricing fails.
     """
-    residuals = model_ivs - target_ivs
+    try:
+        residuals = heston_iv_residuals(
+            params_vector=params_vector,
+            market=market,
+        )
+        return np.asarray(residuals, dtype=float).ravel()
+    except Exception:
+        return np.full(market.target_ivs.size, 1e3, dtype=float)
+
+
+def summarise_stage(
+    stage: str,
+    params: np.ndarray,
+    residuals: np.ndarray,
+) -> dict[str, float | str]:
+    """
+    Build a summary row for the recovery experiment.
+    """
+    residuals = np.asarray(residuals, dtype=float)
 
     return {
-        "optimizer": optimizer_name,
-        "success": result.success,
-        "nfev": result.nfev,
-        "cost": result.cost,
-        "rmse": root_mean_squared_error(actual=target_ivs, predicted=model_ivs),
-        "mae": mean_absolute_error(actual=target_ivs, predicted=model_ivs),
-        "max_abs_error": float(np.max(np.abs(residuals))),
-        "true_base_vol": TRUE_PARAMS["base_vol"],
-        "fit_base_vol": float(result.params[0]),
-        "true_skew": TRUE_PARAMS["skew"],
-        "fit_skew": float(result.params[1]),
-        "true_curvature": TRUE_PARAMS["curvature"],
-        "fit_curvature": float(result.params[2]),
-        "true_term_slope": TRUE_PARAMS["term_slope"],
-        "fit_term_slope": float(result.params[3]),
+        "stage": stage,
+        "kappa": float(params[0]),
+        "theta": float(params[1]),
+        "vol_of_vol": float(params[2]),
+        "rho": float(params[3]),
+        "v0": float(params[4]),
+        "sse": float(np.sum(residuals**2)),
+        "rmse": float(np.sqrt(np.mean(residuals**2))),
+        "mae": float(np.mean(np.abs(residuals))),
     }
 
 
 def main() -> None:
     """
-    Run a synthetic parameter recovery experiment.
+    Run a synthetic Heston recovery experiment.
     """
-    config = SyntheticSurfaceConfig(
-        base_vol=TRUE_PARAMS["base_vol"],
-        skew=TRUE_PARAMS["skew"],
-        curvature=TRUE_PARAMS["curvature"],
-        term_slope=TRUE_PARAMS["term_slope"],
-        noise_std=0.0,
-        seed=42,
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    market = build_synthetic_heston_market()
+
+    initial_guess = np.array([0.8, 0.08, 0.80, -0.10, 0.09], dtype=float)
+
+    initial_residuals = safe_heston_residuals(
+        params_vector=initial_guess,
+        market=market,
     )
 
-    surface = generate_synthetic_surface(config)
-
-    maturities = surface["maturity"].to_numpy(dtype=float)
-    moneyness = surface["moneyness"].to_numpy(dtype=float)
-    target_ivs = surface["target_iv"].to_numpy(dtype=float)
-
-    def model_from_params(params: np.ndarray) -> np.ndarray:
-        return parametric_iv_model(
-            params=params,
-            moneyness=moneyness,
-            maturities=maturities,
-        )
-
-    objective = make_iv_objective(
-        target_ivs=target_ivs,
-        model_iv_function=model_from_params,
-    )
-
-    initial_guess = np.array([0.10, 0.00, 0.10, 0.00])
-    lower_bounds = np.array([0.01, -2.00, 0.00, -1.00])
-    upper_bounds = np.array([2.00, 2.00, 2.00, 1.00])
-
-    local_result = run_least_squares(
-        objective=objective,
+    result = run_least_squares(
+        objective=lambda params: safe_heston_residuals(params, market),
         initial_guess=initial_guess,
-        lower_bounds=lower_bounds,
-        upper_bounds=upper_bounds,
+        bounds=heston_default_bounds(),
+        max_nfev=100,
     )
 
-    global_result = run_differential_evolution_then_least_squares(
-        objective=objective,
-        lower_bounds=lower_bounds,
-        upper_bounds=upper_bounds,
-        maxiter=50,
-        seed=42,
-    )
+    rows = [
+        summarise_stage(
+            stage="initial_guess",
+            params=initial_guess,
+            residuals=initial_residuals,
+        ),
+        summarise_stage(
+            stage="calibrated",
+            params=result.params,
+            residuals=result.residuals,
+        ),
+    ]
 
-    local_model_ivs = model_from_params(local_result.params)
-    global_model_ivs = model_from_params(global_result.params)
+    summary = pd.DataFrame(rows)
 
-    results = pd.DataFrame(
-        [
-            build_results_row(
-                optimizer_name="least_squares",
-                result=local_result,
-                target_ivs=target_ivs,
-                model_ivs=local_model_ivs,
-            ),
-            build_results_row(
-                optimizer_name="differential_evolution_then_least_squares",
-                result=global_result,
-                target_ivs=target_ivs,
-                model_ivs=global_model_ivs,
-            ),
-        ]
-    )
+    output_path = RESULTS_DIR / "heston_recovery_summary.csv"
+    summary.to_csv(output_path, index=False)
 
-    output_path = RESULTS_DIR / "synthetic_recovery_results.csv"
-    results.to_csv(output_path, index=False)
-
-    print("Synthetic recovery experiment complete.")
-    print(f"Saved results to: {output_path}")
-    print()
-    print(results.to_string(index=False))
+    print(summary)
+    print(f"Saved: {output_path}")
+    print(f"Optimizer success: {result.success}")
+    print(f"Optimizer message: {result.message}")
 
 
 if __name__ == "__main__":
