@@ -4,7 +4,7 @@ A Python-based quantitative finance project for option pricing, implied-volatili
 
 This project is built as a modular calibration pipeline rather than a single notebook. It includes tested pricing routines, implied-volatility inversion, calibration metrics, bounded least-squares optimisation, a Heston characteristic-function pricer, synthetic volatility-surface visualisation, and a synthetic Heston recovery experiment.
 
-
+---
 
 ## Project Motivation
 
@@ -12,9 +12,10 @@ Volatility models are used in quantitative finance to explain and reproduce the 
 
 This project explores the workflow:
 
+```text
 model parameters
-→ option prices
-→ implied volatilities
-→ residuals against a target surface
-→ calibration error
-→ optimiser update
+-> option prices
+-> implied volatilities
+-> residuals against a target surface
+-> calibration error
+-> optimiser update
