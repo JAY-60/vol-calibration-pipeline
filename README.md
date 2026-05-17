@@ -19,3 +19,15 @@ model parameters
 -> residuals against a target surface
 -> calibration error
 -> optimiser update
+## Heston Calibration Robustness Diagnostics
+
+To test whether the Heston calibration routine depends on a single favourable initial guess, the project runs a robustness experiment across multiple starting parameter vectors.
+
+Each run records the initial calibration error and final calibration error after bounded least-squares optimisation. The diagnostic plots below compare the initial and final RMSE/SSE values across robustness runs.
+
+![Heston robustness RMSE](results/figures/heston_robustness_rmse.png)
+
+![Heston robustness SSE](results/figures/heston_robustness_sse.png)
+
+The sharp reduction in error demonstrates that the optimiser can substantially improve the calibration fit from different initial guesses. The experiment also highlights an important practical issue in stochastic-volatility calibration: different parameter vectors may produce similar implied-volatility surfaces, so calibration should be assessed using both error reduction and parameter sensitivity.
+
