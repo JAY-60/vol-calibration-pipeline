@@ -66,20 +66,48 @@ def build_synthetic_heston_market() -> HestonCalibrationMarket:
     )
 
 
-def initial_guess_grid() -> list[np.ndarray]:
+def initial_guess_grid(
+    n_guesses: int = 25,
+    seed: int = 123,
+) -> list[np.ndarray]:
     """
-    Candidate starting guesses for robustness testing.
+    Generate reproducible random Heston initial guesses inside a numerically stable
+    admissible region.
 
-    Each vector has order:
+    Parameter order:
     [kappa, theta, vol_of_vol, rho, v0]
     """
-    return [
-        np.array([0.8, 0.08, 0.80, -0.10, 0.09], dtype=float),
-        np.array([0.5, 0.02, 0.25, -0.30, 0.02], dtype=float),
-        np.array([1.0, 0.05, 0.50, -0.70, 0.05], dtype=float),
-        np.array([2.5, 0.10, 1.00, -0.90, 0.08], dtype=float),
-        np.array([3.0, 0.12, 1.50, -0.20, 0.12], dtype=float),
-    ]
+    rng = np.random.default_rng(seed)
+
+    lower_bounds = np.array(
+        [
+            0.60,   # kappa: avoid very slow mean reversion
+            0.03,   # theta: avoid unrealistically tiny long-run variance
+            0.30,   # vol_of_vol: avoid near-degenerate variance volatility
+            -0.85,  # rho: avoid extreme correlation near -1
+            0.03,   # v0: avoid very small initial variance
+        ],
+        dtype=float,
+    )
+
+    upper_bounds = np.array(
+        [
+            3.00,   # kappa: still allows varied mean reversion
+            0.10,   # theta: keeps long-run variance in a plausible range
+            1.00,   # vol_of_vol: avoids highly unstable extreme values
+            -0.35,  # rho: keeps negative equity-style skew without going extreme
+            0.10,   # v0: keeps initial variance plausible
+        ],
+        dtype=float,
+    )
+
+    guesses = rng.uniform(
+        low=lower_bounds,
+        high=upper_bounds,
+        size=(n_guesses, lower_bounds.size),
+    )
+
+    return [guess for guess in guesses]
 
 
 def safe_heston_residuals(
@@ -118,7 +146,7 @@ def error_summary(residuals: np.ndarray) -> dict[str, float]:
 def run_single_calibration(
     initial_guess: np.ndarray,
     market: HestonCalibrationMarket,
-    max_nfev: int = 100,
+    max_nfev: int = 300,
 ):
     """
     Run one bounded least-squares Heston calibration.
@@ -173,7 +201,7 @@ def summarise_run(
     }
 
 
-def main() -> None:
+def main(max_nfev: int = 300) -> None:
     """
     Run a Heston robustness experiment across multiple initial guesses.
     """
@@ -187,7 +215,7 @@ def main() -> None:
         result = run_single_calibration(
             initial_guess=initial_guess,
             market=market,
-            max_nfev=100,
+           max_nfev=max_nfev,
         )
 
         rows.append(

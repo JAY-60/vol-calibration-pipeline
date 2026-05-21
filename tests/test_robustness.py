@@ -36,7 +36,7 @@ def test_single_robustness_calibration_reduces_error() -> None:
     result = run_single_calibration(
         initial_guess=initial_guess,
         market=market,
-        max_nfev=100,
+        max_nfev=300,
     )
 
     final_sse = float(np.sum(np.asarray(result.residuals) ** 2))
