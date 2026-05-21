@@ -147,3 +147,11 @@ The current experiments use synthetic data, which is useful for controlled testi
 - comparison of multiple stochastic-volatility models
 - richer parameter-identifiability diagnostics
 - calibration against observed volatility surfaces
+
+## Theory Notes
+
+A concise explanation of the mathematical and numerical ideas behind the calibration pipeline is available here:
+
+[Heston Model Calibration Notes](docs/heston_theory.md)
+
+The note covers the Heston model, implied-volatility calibration, least-squares optimisation, error metrics, function evaluations, and the multi-start robustness experiment.
