@@ -1,5 +1,9 @@
 # Volatility Model Calibration Pipeline
 
+
+![Tests](https://github.com/JAY-60/vol-calibration-pipeline/actions/workflows/tests.yml/badge.svg)
+
+
 A Python project for option pricing, implied-volatility inversion, volatility-surface generation, and Heston model calibration.
 
 The project is structured as a small calibration pipeline rather than a single exploratory notebook. It includes pricing routines, implied-volatility inversion, calibration error metrics, bounded least-squares optimisation, a Heston characteristic-function pricer, synthetic volatility-surface generation, and robustness experiments.
